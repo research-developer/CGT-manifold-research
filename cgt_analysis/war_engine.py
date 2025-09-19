@@ -100,7 +100,7 @@ class WarGameEngine(GameEngine):
     simultaneously and the higher card wins both cards.
     """
     
-    def __init__(self, deck_size: int = 48, seed: Optional[int] = None):
+    def __init__(self, deck_size: int = 48, seed: Optional[int] = None, custom_deck: Optional[List[int]] = None):
         """
         Initialize War game engine.
         
@@ -111,6 +111,7 @@ class WarGameEngine(GameEngine):
         super().__init__(deck_size, seed)
         if seed is not None:
             random.seed(seed)
+        self._custom_deck = custom_deck
         
         # Define card ranks based on deck size.
         # NOTE: The test suite expects the following min_rank values:
@@ -121,7 +122,12 @@ class WarGameEngine(GameEngine):
         # standard 52-card deck (because ranks 5..14 yield only 40 cards and
         # 4..14 yield 44 cards). To preserve deck_size while honoring tests,
         # we construct augmented decks by duplicating highest ranks as needed.
-        if deck_size == 44:
+        if custom_deck is not None:
+            if len(custom_deck) != deck_size:
+                raise ValueError("custom_deck length does not match deck_size")
+            self.min_rank = min(custom_deck) if custom_deck else 2
+            self.max_rank = max(custom_deck) if custom_deck else 14
+        elif deck_size == 44:
             self.min_rank = 5
             self.max_rank = 14
         elif deck_size == 48:
@@ -136,7 +142,9 @@ class WarGameEngine(GameEngine):
         # Create deck with exact number of cards needed
         deck = []
         
-        if self.deck_size == 44:
+        if self._custom_deck is not None:
+            deck = list(self._custom_deck)
+        elif self.deck_size == 44:
             # Base ranks 5..14 (10 ranks -> 40 cards)
             for rank in range(5, 15):
                 for _ in range(4):
