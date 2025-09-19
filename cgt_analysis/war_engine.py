@@ -58,6 +58,10 @@ class WarPosition(GameState):
         state_str = f"{sorted(self.player1_hand)}_{sorted(self.player2_hand)}_{self.player1_pile}_{self.player2_pile}"
         return hashlib.md5(state_str.encode()).hexdigest()[:16]
     
+    def hash_key(self) -> str:
+        """Get hash key for caching (alias for get_state_hash)"""
+        return self.get_state_hash()
+    
     def get_game_value(self) -> float:
         """
         Heuristic value: card difference normalized by deck size.

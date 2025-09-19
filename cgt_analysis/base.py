@@ -214,11 +214,11 @@ class CGTAnalyzer:
         
         # Calculate Grundy number
         grundy_calc = GrundyCalculator()
-        grundy = grundy_calc.calculate_grundy_number(cgt_pos)
+        grundy = grundy_calc.compute_grundy_number(cgt_pos)
         
         # Calculate temperature
         temp_calc = TemperatureCalculator()
-        temperature = temp_calc.calculate_temperature(cgt_pos)
+        temperature = temp_calc.compute_temperature(cgt_pos)
         
         # Get complete analysis
         analysis = cgt_pos.get_analysis_summary()

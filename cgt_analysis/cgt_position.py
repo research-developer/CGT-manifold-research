@@ -9,6 +9,7 @@ from typing import List, Dict, Set, Optional, Tuple, Union
 from dataclasses import dataclass
 from fractions import Fraction
 import copy
+import math
 from enum import Enum
 
 class GameOutcome(Enum):
@@ -136,6 +137,15 @@ class CGTPosition:
         
         The simplest numbers are integers, then halves, then quarters, etc.
         """
+        # Handle infinity cases
+        if not (math.isfinite(lower) and math.isfinite(upper)):
+            if math.isinf(lower) and math.isinf(upper):
+                return Fraction(0)  # Default for double infinity
+            elif math.isinf(upper):
+                return Fraction(int(lower) + 1) if math.isfinite(lower) else Fraction(1)
+            elif math.isinf(lower):
+                return Fraction(int(upper) - 1) if math.isfinite(upper) else Fraction(-1)
+        
         # Check if 0 is in the interval
         if lower < 0 < upper:
             return Fraction(0)
@@ -157,8 +167,11 @@ class CGTPosition:
             if lower < quarter < upper:
                 return quarter
         
-        # Fallback: use midpoint
-        return Fraction(lower + upper) / 2
+        # Fallback: use midpoint (with safety checks)
+        if math.isfinite(lower) and math.isfinite(upper):
+            return Fraction(lower + upper) / 2
+        else:
+            return Fraction(0)  # Safe fallback
     
     def compute_outcome_class(self) -> GameOutcome:
         """
