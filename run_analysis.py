@@ -16,6 +16,7 @@ from typing import List, Dict, Any
 sys.path.insert(0, str(Path(__file__).parent))
 
 from cgt_analysis.base import CGTAnalyzer, DataManager
+from cgt_analysis.lens_base import get_lens, available_lenses, AnalysisContext
 from cgt_analysis.war_engine import WarGameEngine
 
 
@@ -347,6 +348,13 @@ def main():
         choices=['positions', 'monte_carlo', 'periodicity', 'temperature', 'all'],
         help='Types of analyses to run'
     )
+
+    parser.add_argument(
+        '--lenses',
+        nargs='*',
+        default=[],
+        help='Lens ids to run (e.g., temperature grundy). Available: ' + ', '.join(available_lenses())
+    )
     
     parser.add_argument(
         '--no-save',
@@ -368,11 +376,48 @@ def main():
     if 'all' in args.analyses or 'positions' in args.analyses or 'monte_carlo' in args.analyses:
         if 'war' in args.games or 'all' in args.games:
             print("\nRunning War analysis...")
-            all_results['war_analysis'] = run_war_analysis(
+            war_results = run_war_analysis(
                 deck_sizes=args.deck_sizes,
                 num_simulations=args.simulations,
                 save_results=not args.no_save
             )
+            all_results['war_analysis'] = war_results
+
+            # Execute lenses if requested
+            if args.lenses:
+                print("\nApplying lenses: " + ', '.join(args.lenses))
+                lens_outputs = {}
+                for deck_size, deck_data in war_results.items():
+                    # Prepare context components
+                    positions = [p for p in deck_data['positions'].values() if isinstance(p, dict) and 'position_name' in p]
+                    # We need actual position objects for Grundy lens; currently we only stored analyses.
+                    # For Phase 1 simplicity, we will re-create position A only as a sample.
+                    from cgt_analysis.war_engine import WarGameEngine
+                    engine = WarGameEngine(deck_size=deck_size, seed=42)
+                    analyzer = CGTAnalyzer(engine)
+                    sample_positions = [engine.create_position_a(), engine.create_position_b()]
+
+                    # Monte Carlo trajectories are not stored; we can approximate by simulating a few short games
+                    trajectories = []
+                    for _ in range(5):
+                        sim_result = engine.simulate_game()
+                        trajectories.append(sim_result.get('trajectory', []))
+
+                    ctx = AnalysisContext(
+                        analyzer=analyzer,
+                        engine=engine,
+                        sample_positions=sample_positions,
+                        trajectories=trajectories
+                    )
+                    lens_outputs[deck_size] = {}
+                    for lens_id in args.lenses:
+                        try:
+                            lens = get_lens(lens_id)
+                            output = lens.compute(ctx)
+                            lens_outputs[deck_size][lens_id] = output
+                        except Exception as e:
+                            lens_outputs[deck_size][lens_id] = {'error': str(e)}
+                all_results['lenses'] = lens_outputs
     
     if 'all' in args.analyses or 'periodicity' in args.analyses:
         print("\nRunning periodicity analysis...")
