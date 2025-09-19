@@ -238,11 +238,13 @@ class CGTAnalyzer:
         from cgt_analysis.cgt_position import CGTPosition
         
         if state.is_terminal() or depth >= max_depth:
-            return CGTPosition(
+            cgt_pos = CGTPosition(
                 left_options=[],
                 right_options=[],
-                position_name=f"{self.engine.game_name}_{state.get_state_hash()[:8]}_d{depth}"
+                position_name=f"{self.engine.game_name}_{state.get_state_hash()[:8]}_d{depth}",
+                war_position=state if hasattr(state, 'player1_hand') else None
             )
+            return cgt_pos
         
         # Get next states
         next_states = self.engine.get_next_states(state)
@@ -272,7 +274,8 @@ class CGTAnalyzer:
         return CGTPosition(
             left_options=left_options,
             right_options=right_options,
-            position_name=f"{self.engine.game_name}_{state.get_state_hash()[:8]}_d{depth}"
+            position_name=f"{self.engine.game_name}_{state.get_state_hash()[:8]}_d{depth}",
+            war_position=state if hasattr(state, 'player1_hand') else None
         )
     
     def run_monte_carlo_analysis(self, num_simulations: int = 1000) -> Dict[str, Any]:
