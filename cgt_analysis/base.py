@@ -238,11 +238,13 @@ class CGTAnalyzer:
         from cgt_analysis.cgt_position import CGTPosition
         
         if state.is_terminal() or depth >= max_depth:
-            return CGTPosition(
+            cgt_pos = CGTPosition(
                 left_options=[],
                 right_options=[],
-                position_name=f"{self.engine.game_name}_{state.get_state_hash()[:8]}_d{depth}"
+                position_name=f"{self.engine.game_name}_{state.get_state_hash()[:8]}_d{depth}",
+                war_position=state if hasattr(state, 'player1_hand') else None
             )
+            return cgt_pos
         
         # Get next states
         next_states = self.engine.get_next_states(state)
@@ -272,7 +274,8 @@ class CGTAnalyzer:
         return CGTPosition(
             left_options=left_options,
             right_options=right_options,
-            position_name=f"{self.engine.game_name}_{state.get_state_hash()[:8]}_d{depth}"
+            position_name=f"{self.engine.game_name}_{state.get_state_hash()[:8]}_d{depth}",
+            war_position=state if hasattr(state, 'player1_hand') else None
         )
     
     def run_monte_carlo_analysis(self, num_simulations: int = 1000) -> Dict[str, Any]:
@@ -374,7 +377,8 @@ class DataManager:
         filename = f"{game_name}_{deck_size}_{analysis_type}_{timestamp}.json"
         filepath = f"{self.base_path}/raw/{filename}"
         
-        # Add metadata
+        # Add metadata (without mutating caller's original reference deeply)
+        data = dict(data)  # shallow copy
         data['metadata'] = {
             'game_name': game_name,
             'deck_size': deck_size,
@@ -382,10 +386,13 @@ class DataManager:
             'timestamp': timestamp,
             'version': '1.0.0'
         }
+
+        # Sanitize data to ensure JSON serializable (convert Enum keys/values, numpy scalars, sets, etc.)
+        sanitized = self._sanitize_for_json(data)
         
         # Save data
         with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(sanitized, f, indent=2)
         
         return filepath
     
@@ -472,3 +479,68 @@ class DataManager:
         df.to_csv(report_path, index=False)
         
         return report_path
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _sanitize_for_json(self, obj: Any) -> Any:
+        """Recursively convert an object into a JSON-serializable form.
+
+        Handles:
+        - Enum keys & values (stored as their .name)
+        - numpy scalar types (converted to native Python)
+        - numpy arrays (converted to lists)
+        - sets and tuples (converted to lists)
+        - objects providing to_dict()
+        - Fallback: str() for unknown non-serializable keys
+        """
+        from enum import Enum as _Enum
+        try:
+            import numpy as _np  # type: ignore
+        except ImportError:  # pragma: no cover
+            _np = None  # type: ignore
+
+        # Enum instance itself
+        if isinstance(obj, _Enum):
+            return obj.name
+
+        # Basic types already serializable
+        if isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+
+        # numpy scalar
+        if _np is not None:
+            if isinstance(obj, (_np.integer,)):
+                return int(obj)
+            if isinstance(obj, (_np.floating,)):
+                return float(obj)
+            if isinstance(obj, (_np.ndarray,)):
+                return [self._sanitize_for_json(x) for x in obj.tolist()]
+
+        # Dict: sanitize keys & values
+        if isinstance(obj, dict):
+            new_dict = {}
+            for k, v in obj.items():
+                # Sanitize key
+                if isinstance(k, _Enum):
+                    key = k.name
+                elif isinstance(k, (str, int, float, bool)) or k is None:
+                    key = k
+                else:
+                    key = str(k)
+                new_dict[key] = self._sanitize_for_json(v)
+            return new_dict
+
+        # Iterable containers
+        if isinstance(obj, (list, tuple, set)):
+            return [self._sanitize_for_json(x) for x in obj]
+
+        # Dataclass / custom object with to_dict
+        if hasattr(obj, 'to_dict') and callable(getattr(obj, 'to_dict')):
+            try:
+                return self._sanitize_for_json(obj.to_dict())
+            except Exception:  # pragma: no cover
+                return str(obj)
+
+        # Fallback to string representation
+        return str(obj)

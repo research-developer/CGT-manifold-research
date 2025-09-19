@@ -16,6 +16,9 @@ from typing import List, Dict, Any
 sys.path.insert(0, str(Path(__file__).parent))
 
 from cgt_analysis.base import CGTAnalyzer, DataManager
+from cgt_analysis.lens_base import get_lens, available_lenses, AnalysisContext
+from cgt_analysis.lens_orchestrator import LensOrchestrator
+from cgt_analysis.deck_builders import available_deck_strategies, get_deck_builder
 from cgt_analysis.war_engine import WarGameEngine
 
 
@@ -347,6 +350,31 @@ def main():
         choices=['positions', 'monte_carlo', 'periodicity', 'temperature', 'all'],
         help='Types of analyses to run'
     )
+
+    parser.add_argument(
+        '--lenses',
+        nargs='*',
+        default=[],
+        help='Lens ids to run (e.g., temperature grundy). Available: ' + ', '.join(available_lenses())
+    )
+    parser.add_argument(
+        '--deck-strategy',
+        default=None,
+        choices=[None, *available_deck_strategies()],
+        help='Optional deck construction strategy to override engine default.'
+    )
+    parser.add_argument(
+        '--deck-policy',
+        type=str,
+        default=None,
+        help='JSON string with additional policy parameters for deck strategy.'
+    )
+    parser.add_argument(
+        '--lens-samples',
+        type=int,
+        default=6,
+        help='Number of sample positions for lens orchestrator.'
+    )
     
     parser.add_argument(
         '--no-save',
@@ -368,11 +396,53 @@ def main():
     if 'all' in args.analyses or 'positions' in args.analyses or 'monte_carlo' in args.analyses:
         if 'war' in args.games or 'all' in args.games:
             print("\nRunning War analysis...")
-            all_results['war_analysis'] = run_war_analysis(
-                deck_sizes=args.deck_sizes,
-                num_simulations=args.simulations,
-                save_results=not args.no_save
-            )
+            war_results = {}
+            # Custom deck policy parsing
+            deck_policy = {}
+            if args.deck_policy:
+                import json as _json
+                try:
+                    deck_policy = _json.loads(args.deck_policy)
+                except Exception:
+                    print("Warning: Could not parse deck policy JSON; ignoring.")
+            
+            for deck_size in args.deck_sizes:
+                custom_deck = None
+                if args.deck_strategy:
+                    builder = get_deck_builder(args.deck_strategy)
+                    custom_deck = builder.build(deck_size=deck_size, seed=42, **deck_policy)
+                # Run analysis for this deck size individually (reusing original function logic with minor adaptation)
+                tmp_results = run_war_analysis(
+                    deck_sizes=[deck_size],
+                    num_simulations=args.simulations,
+                    save_results=not args.no_save
+                )
+                war_results.update(tmp_results)
+                # If lenses requested, orchestrate now per deck size with custom deck if specified
+                if args.lenses:
+                    from cgt_analysis.war_engine import WarGameEngine
+                    engine = WarGameEngine(deck_size=deck_size, seed=42, custom_deck=custom_deck)
+                    orchestrator = LensOrchestrator(
+                        engine=engine,
+                        lens_ids=args.lenses,
+                        seed=42,
+                        num_samples=args.lens_samples,
+                        trajectory_simulations=5
+                    )
+                    lens_output_bundle = orchestrator.run()
+                    war_results[deck_size]['lens_outputs'] = lens_output_bundle['lens_outputs']
+                    # Persist each lens output
+                    if not args.no_save:
+                        data_manager = DataManager()
+                        for lid, lres in lens_output_bundle['lens_outputs'].items():
+                            data_manager.save_analysis_result(
+                                game_name='War',
+                                deck_size=deck_size,
+                                analysis_type=f'lens_{lid}',
+                                data=lres
+                            )
+            
+            all_results['war_analysis'] = war_results
     
     if 'all' in args.analyses or 'periodicity' in args.analyses:
         print("\nRunning periodicity analysis...")

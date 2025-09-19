@@ -150,28 +150,45 @@ class CGTPosition:
         if lower < 0 < upper:
             return Fraction(0)
         
-        # Check integers
-        for i in range(-10, 11):  # Reasonable range for card games
-            if lower < i < upper:
-                return Fraction(i)
+        # Check for integers in the interval
+        lower_int = int(math.floor(lower)) + 1
+        upper_int = int(math.ceil(upper)) - 1
         
-        # Check halves
-        for i in range(-20, 21):
-            half = Fraction(i, 2)
-            if lower < half < upper:
-                return half
+        if lower_int <= upper_int:
+            # There's an integer in the interval, return the simplest one
+            if lower_int <= 0 <= upper_int:
+                return Fraction(0)
+            elif lower_int > 0:
+                return Fraction(lower_int)
+            else:
+                return Fraction(upper_int)
         
-        # Check quarters
-        for i in range(-40, 41):
-            quarter = Fraction(i, 4)
-            if lower < quarter < upper:
-                return quarter
+        # No integers in interval, look for halves
+        # Check if n + 1/2 is in interval for any integer n
+        for n in range(int(math.floor(lower)), int(math.ceil(upper)) + 1):
+            half_val = n + 0.5
+            if lower < half_val < upper:
+                return Fraction(n * 2 + 1, 2)  # Represents n + 1/2
         
-        # Fallback: use midpoint (with safety checks)
-        if math.isfinite(lower) and math.isfinite(upper):
-            return Fraction(lower + upper) / 2
-        else:
-            return Fraction(0)  # Safe fallback
+        # No halves, look for quarters, etc.
+        # For simplicity, return the midpoint as a fraction
+        midpoint = (float(lower) + float(upper)) / 2
+        return Fraction(midpoint).limit_denominator(1000)
+    
+    def compute_temperature(self) -> float:
+        """
+        Compute the temperature of this position.
+        
+        Temperature measures the incentive for players to move.
+        """
+        if self._temperature is not None:
+            return self._temperature
+        
+        # Use the temperature calculator for proper computation
+        from .temperature_analysis import TemperatureCalculator
+        calculator = TemperatureCalculator()
+        self._temperature = calculator.compute_temperature(self)
+        return self._temperature
     
     def compute_outcome_class(self) -> GameOutcome:
         """
