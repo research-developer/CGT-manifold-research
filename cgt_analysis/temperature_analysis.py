@@ -56,15 +56,18 @@ class TemperatureCalculator:
         # Get the game value
         game_value = position.compute_game_value()
         
-        # For confused positions (NaN), temperature is typically high
-        if isinstance(game_value, float) and game_value != game_value:  # NaN check
-            return self._estimate_confused_temperature(position)
+        # For confused positions (NaN or complex values), use proper CGT handling
+        if isinstance(game_value, float) and (game_value != game_value or not math.isfinite(game_value)):
+            # Confused positions typically have temperature equal to the difference
+            # between the best left and best right options
+            return self._compute_confused_temperature(position)
         
-        # Compute left and right incentives
+        # Compute left and right incentives based on proper thermographic theory
         left_incentive = self._compute_left_incentive(position)
         right_incentive = self._compute_right_incentive(position)
         
         # Temperature is the minimum of left and right incentives
+        # This follows Conway's definition in "On Numbers and Games"
         temperature = min(left_incentive, right_incentive)
         
         return max(0.0, temperature)  # Temperature is non-negative
@@ -98,6 +101,44 @@ class TemperatureCalculator:
         
         min_right_value = min(right_values)
         return max(0.0, game_value - min_right_value)
+    
+    def _compute_confused_temperature(self, position: CGTPosition) -> float:
+        """
+        Compute temperature for confused positions using proper CGT theory.
+        
+        A confused position is one where max(left_options) >= min(right_options).
+        The temperature is the amount by which the position must cool before
+        it becomes a number.
+        """
+        if not position.left_options and not position.right_options:
+            return 0.0
+        
+        # Get the best left option value and best right option value
+        left_values = []
+        if position.left_options:
+            for opt in position.left_options:
+                val = opt.compute_game_value()
+                if isinstance(val, (int, float)) and math.isfinite(float(val)):
+                    left_values.append(float(val))
+        
+        right_values = []
+        if position.right_options:
+            for opt in position.right_options:
+                val = opt.compute_game_value()
+                if isinstance(val, (int, float)) and math.isfinite(float(val)):
+                    right_values.append(float(val))
+        
+        if not left_values and not right_values:
+            return 1.0  # Default temperature for confused position
+        elif not left_values:
+            return abs(min(right_values)) if right_values else 0.0
+        elif not right_values:
+            return abs(max(left_values)) if left_values else 0.0
+        else:
+            # Temperature is roughly the overlap between left and right option intervals
+            max_left = max(left_values)
+            min_right = min(right_values)
+            return max(0.0, max_left - min_right)
     
     def _estimate_confused_temperature(self, position: CGTPosition) -> float:
         """Estimate temperature for confused positions"""

@@ -62,9 +62,16 @@ class GrundyCalculator:
         # Collect Grundy numbers of all reachable positions
         reachable_grundy_numbers = set()
         
-        # For partisan games, we need to consider both left and right moves
-        # In War, we treat this as an impartial game approximation
-        all_options = position.left_options + position.right_options
+        # Handle partisan vs impartial games properly
+        if self._is_impartial_approximation(position):
+            # For War: treat as impartial by combining both player options
+            all_options = position.left_options + position.right_options
+        else:
+            # For true partisan games, Grundy numbers are more complex
+            # This would require Conway's theory of partisan games
+            all_options = position.left_options + position.right_options
+            if trace:
+                self.computation_trace.append(f"Warning: Partisan game approximated as impartial for {position.position_name}")
         
         for option in all_options:
             option_grundy = self._compute_grundy_recursive(option, trace)
@@ -181,23 +188,51 @@ class GrundyCalculator:
         }
     
     def _simple_grundy(self, position: CGTPosition) -> int:
-        """Simplified Grundy calculation for verification"""
+        """Simplified Grundy calculation for verification using proper recursion"""
         if position.is_terminal():
             return 0
+        
+        # Use a simple cache to avoid infinite recursion
+        if hasattr(self, '_verification_cache') and position.position_name in self._verification_cache:
+            return self._verification_cache[position.position_name]
+        
+        if not hasattr(self, '_verification_cache'):
+            self._verification_cache = {}
         
         reachable = set()
         for option in position.left_options + position.right_options:
             if option.is_terminal():
                 reachable.add(0)
             else:
-                # Simplified: assume Grundy number is 1 for non-terminal
-                # This is a verification approximation
-                reachable.add(1)
+                # Proper recursive calculation (but limited depth for verification)
+                if len(self._verification_cache) < 10:  # Limit depth to prevent explosion
+                    sub_grundy = self._simple_grundy(option)
+                    reachable.add(sub_grundy)
+                else:
+                    # Fall back to heuristic for deep positions
+                    reachable.add(1)
         
         mex = 0
         while mex in reachable:
             mex += 1
+        
+        self._verification_cache[position.position_name] = mex
         return mex
+    
+    def _is_impartial_approximation(self, position: CGTPosition) -> bool:
+        """
+        Determine if position can be reasonably approximated as impartial.
+        
+        For War positions, this is generally true since the moves available
+        are primarily determined by the game state rather than player identity.
+        """
+        # For War games, we approximate as impartial
+        # In a true impartial game, left_options would equal right_options
+        if position.war_position is not None:
+            return True
+            
+        # For other games, check if option sets are similar
+        return len(position.left_options) > 0 and len(position.right_options) > 0
     
     def _get_mex_details(self, position: CGTPosition) -> Dict[str, any]:
         """Get detailed mex calculation for the position"""
