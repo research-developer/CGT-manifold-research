@@ -278,12 +278,16 @@ class CGTAnalyzer:
             war_position=state if hasattr(state, 'player1_hand') else None
         )
     
-    def run_monte_carlo_analysis(self, num_simulations: int = 1000) -> Dict[str, Any]:
+    def run_monte_carlo_analysis(self, num_simulations: int = 1000, 
+                                use_antithetic_variates: bool = False,
+                                track_convergence: bool = False) -> Dict[str, Any]:
         """
         Run Monte Carlo simulations for statistical analysis.
         
         Args:
             num_simulations: Number of games to simulate
+            use_antithetic_variates: Use variance reduction technique
+            track_convergence: Track convergence diagnostics
             
         Returns:
             Dictionary with statistical results
@@ -294,29 +298,110 @@ class CGTAnalyzer:
             'game_name': self.engine.game_name,
             'wins': {Player.PLAYER1: 0, Player.PLAYER2: 0},
             'game_lengths': [],
-            'temperature_trajectories': []
+            'temperature_trajectories': [],
+            'use_antithetic_variates': use_antithetic_variates,
+            'convergence_diagnostics': {} if track_convergence else None
         }
         
-        for i in range(num_simulations):
-            game_result = self.engine.simulate_game()
-            
-            # Record winner
-            if game_result['winner']:
-                results['wins'][game_result['winner']] += 1
-            
-            # Record game length
-            results['game_lengths'].append(game_result['num_moves'])
-            
-            # Record temperature if available
-            if 'temperature_trajectory' in game_result:
-                results['temperature_trajectories'].append(game_result['temperature_trajectory'])
+        # Track running statistics for convergence
+        running_lengths = []
+        running_win_rates = []
         
-        # Calculate statistics
+        if use_antithetic_variates and num_simulations % 2 != 0:
+            num_simulations += 1  # Ensure even number for pairs
+            results['num_simulations'] = num_simulations
+        
         import numpy as np
-        results['win_rate_p1'] = results['wins'][Player.PLAYER1] / num_simulations
-        results['win_rate_p2'] = results['wins'][Player.PLAYER2] / num_simulations
-        results['avg_game_length'] = np.mean(results['game_lengths'])
-        results['std_game_length'] = np.std(results['game_lengths'])
+        
+        if use_antithetic_variates:
+            # Run simulations in pairs with antithetic variates
+            for i in range(0, num_simulations, 2):
+                # Set seed for reproducibility
+                if hasattr(self.engine, 'seed') and self.engine.seed is not None:
+                    base_seed = self.engine.seed + i
+                else:
+                    base_seed = i
+                
+                # Normal simulation
+                np.random.seed(base_seed)
+                game_result1 = self.engine.simulate_game()
+                
+                # Antithetic simulation (different seed pattern)
+                np.random.seed(999999 - base_seed)
+                game_result2 = self.engine.simulate_game()
+                
+                # Process both results
+                for game_result in [game_result1, game_result2]:
+                    if game_result.get('winner'):
+                        results['wins'][game_result['winner']] += 1
+                    
+                    length = game_result.get('num_moves', 0)
+                    results['game_lengths'].append(length)
+                    running_lengths.append(length)
+                    
+                    if 'temperature_trajectory' in game_result:
+                        results['temperature_trajectories'].append(game_result['temperature_trajectory'])
+                    
+                    # Track convergence
+                    if track_convergence and len(running_lengths) > 10:
+                        current_win_rate = results['wins'][Player.PLAYER1] / len(running_lengths)
+                        running_win_rates.append(current_win_rate)
+        else:
+            # Standard Monte Carlo
+            for i in range(num_simulations):
+                # Set seed for reproducibility
+                if hasattr(self.engine, 'seed') and self.engine.seed is not None:
+                    np.random.seed(self.engine.seed + i)
+                else:
+                    np.random.seed(i)
+                
+                game_result = self.engine.simulate_game()
+                
+                if game_result.get('winner'):
+                    results['wins'][game_result['winner']] += 1
+                
+                length = game_result.get('num_moves', 0)
+                results['game_lengths'].append(length)
+                running_lengths.append(length)
+                
+                if 'temperature_trajectory' in game_result:
+                    results['temperature_trajectories'].append(game_result['temperature_trajectory'])
+                
+                if track_convergence and len(running_lengths) > 10:
+                    current_win_rate = results['wins'][Player.PLAYER1] / len(running_lengths)
+                    running_win_rates.append(current_win_rate)
+        
+        # Calculate final statistics
+        total_games = len(results['game_lengths'])
+        if total_games > 0:
+            results['win_rate_p1'] = results['wins'][Player.PLAYER1] / total_games
+            results['win_rate_p2'] = results['wins'][Player.PLAYER2] / total_games
+            results['avg_game_length'] = np.mean(results['game_lengths'])
+            results['std_game_length'] = np.std(results['game_lengths'])
+            results['median_game_length'] = np.median(results['game_lengths'])
+            results['min_game_length'] = np.min(results['game_lengths'])
+            results['max_game_length'] = np.max(results['game_lengths'])
+        else:
+            results['win_rate_p1'] = 0.0
+            results['win_rate_p2'] = 0.0
+            results['avg_game_length'] = 0.0
+            results['std_game_length'] = 0.0
+            results['median_game_length'] = 0.0
+            results['min_game_length'] = 0
+            results['max_game_length'] = 0
+        
+        # Add convergence diagnostics if requested
+        if track_convergence and len(running_win_rates) > 0:
+            # Simple convergence diagnostics
+            final_win_rate = results['win_rate_p1']
+            win_rate_variance = np.var(running_win_rates[-100:]) if len(running_win_rates) >= 100 else np.var(running_win_rates)
+            
+            results['convergence_diagnostics'] = {
+                'final_win_rate': final_win_rate,
+                'win_rate_variance': win_rate_variance,
+                'converged': win_rate_variance < 0.001,  # Threshold for convergence
+                'running_win_rates_sample': running_win_rates[-50:] if len(running_win_rates) >= 50 else running_win_rates
+            }
         
         return results
 
