@@ -20,6 +20,7 @@ from cgt_analysis.lens_base import get_lens, available_lenses, AnalysisContext
 from cgt_analysis.lens_orchestrator import LensOrchestrator
 from cgt_analysis.deck_builders import available_deck_strategies, get_deck_builder
 from cgt_analysis.war_engine import WarGameEngine
+from cgt_analysis.statistical_analysis import StatisticalAnalyzer
 
 
 def run_war_analysis(deck_sizes: List[int] = [44, 48, 52], 
@@ -67,13 +68,24 @@ def run_war_analysis(deck_sizes: List[int] = [44, 48, 52],
             print(f"    Position {name}: Grundy={analysis.get('grundy_number', '?')}, "
                   f"Temp={analysis.get('temperature_computed', '?'):.3f}")
         
-        # Run Monte Carlo simulations
-        print(f"  Running {num_simulations} simulations...")
-        monte_carlo = analyzer.run_monte_carlo_analysis(num_simulations)
+        # Run Enhanced Monte Carlo simulations with statistical rigor
+        print(f"  Running {num_simulations} enhanced simulations...")
+        monte_carlo = analyzer.run_monte_carlo_analysis(
+            num_simulations=num_simulations,
+            use_antithetic_variates=True,
+            track_convergence=True
+        )
         print(f"    Win rates: P1={monte_carlo['win_rate_p1']:.3f}, "
               f"P2={monte_carlo['win_rate_p2']:.3f}")
         print(f"    Avg game length: {monte_carlo['avg_game_length']:.1f} ± "
               f"{monte_carlo['std_game_length']:.1f}")
+        
+        # Add convergence diagnostics
+        if monte_carlo.get('convergence_diagnostics'):
+            converged = monte_carlo['convergence_diagnostics'].get('converged', False)
+            print(f"    Convergence: {'✓' if converged else '✗'}")
+            if not converged:
+                print(f"    Warning: Simulations may not have converged. Consider increasing sample size.")
         
         # Store results
         results[deck_size] = {
@@ -100,6 +112,213 @@ def run_war_analysis(deck_sizes: List[int] = [44, 48, 52],
             )
     
     return results
+
+
+def run_statistical_analysis(deck_sizes: List[int] = [44, 48, 52],
+                            num_simulations: int = 1000,
+                            save_results: bool = True) -> Dict[str, Any]:
+    """
+    Run comprehensive statistical analysis across deck sizes.
+    
+    Args:
+        deck_sizes: List of deck sizes to analyze
+        num_simulations: Number of simulations per deck size
+        save_results: Whether to save results to disk
+        
+    Returns:
+        Dictionary with statistical analysis results
+    """
+    print("\n" + "=" * 60)
+    print("COMPREHENSIVE STATISTICAL ANALYSIS")
+    print("=" * 60)
+    
+    # Initialize statistical analyzer
+    statistical_analyzer = StatisticalAnalyzer(significance_level=0.05)
+    data_manager = DataManager() if save_results else None
+    
+    # Collect Monte Carlo results for all deck sizes
+    print("Phase 1: Running Monte Carlo simulations for all deck sizes...")
+    mc_results = {}
+    
+    for deck_size in deck_sizes:
+        print(f"\n  Analyzing {deck_size}-card deck...")
+        
+        # Initialize engine and analyzer
+        engine = WarGameEngine(deck_size=deck_size, seed=42)
+        analyzer = CGTAnalyzer(engine)
+        
+        # Run enhanced Monte Carlo with statistical rigor
+        results = statistical_analyzer.run_enhanced_monte_carlo(
+            analyzer,
+            num_simulations=num_simulations,
+            use_antithetic_variates=True,
+            track_convergence=True
+        )
+        
+        mc_results[deck_size] = results
+        
+        print(f"    Win rate P1: {results['win_rate_p1']:.4f}")
+        print(f"    Avg game length: {results['avg_game_length']:.2f} ± {results['std_game_length']:.2f}")
+        
+        # Check convergence
+        if results.get('convergence_diagnostics'):
+            converged = results['convergence_diagnostics'].get('converged', False)
+            print(f"    Convergence: {'✓' if converged else '✗'}")
+        
+        # Save individual results
+        if save_results and data_manager:
+            data_manager.save_analysis_result(
+                game_name="War",
+                deck_size=deck_size,
+                analysis_type="enhanced_monte_carlo",
+                data=results
+            )
+    
+    # Phase 2: Comprehensive hypothesis testing
+    print(f"\nPhase 2: Running hypothesis tests...")
+    
+    if len(deck_sizes) >= 3:
+        results_44 = mc_results.get(44, mc_results[min(deck_sizes)])
+        results_48 = mc_results.get(48, mc_results[sorted(deck_sizes)[len(deck_sizes)//2]])
+        results_52 = mc_results.get(52, mc_results[max(deck_sizes)])
+        
+        hypothesis_tests = statistical_analyzer.run_comprehensive_hypothesis_tests(
+            results_44, results_48, results_52
+        )
+        
+        print(f"    Completed {len(hypothesis_tests)} hypothesis tests")
+        
+        # Print key results
+        for test_name, test_result in hypothesis_tests.items():
+            significance = "✓ SIGNIFICANT" if test_result.p_value < 0.05 else "✗ Not significant"
+            print(f"    {test_result.test_name}: p={test_result.p_value:.6f} {significance}")
+    else:
+        hypothesis_tests = {}
+        print("    Skipped (need at least 3 deck sizes)")
+    
+    # Phase 3: Power analysis
+    print(f"\nPhase 3: Power analysis...")
+    power_analyses = {}
+    
+    for effect_size in [0.2, 0.5, 0.8]:  # Small, medium, large effects
+        power_result = statistical_analyzer.calculate_power_analysis(
+            effect_size=effect_size,
+            sample_size=num_simulations,
+            test_type='two_sample'
+        )
+        power_analyses[f"effect_size_{effect_size}"] = power_result
+        print(f"    Effect size {effect_size}: Power = {power_result['power']:.3f}")
+    
+    # Phase 4: Bootstrap confidence intervals
+    print(f"\nPhase 4: Bootstrap confidence intervals...")
+    bootstrap_results = {}
+    
+    for deck_size, results in mc_results.items():
+        # Win rate CI - create proper bootstrap sample
+        win_rate_samples = [1 if i < int(results['win_rate_p1'] * len(results['game_lengths'])) else 0 
+                           for i in range(len(results['game_lengths']))]
+        import numpy as np
+        
+        win_rate_ci = statistical_analyzer.bootstrap_confidence_intervals(
+            win_rate_samples,
+            statistic_func=lambda x: np.mean(x),
+            n_bootstrap=1000
+        )
+        
+        # Game length CI
+        length_ci = statistical_analyzer.bootstrap_confidence_intervals(
+            results['game_lengths'],
+            statistic_func=np.mean,
+            n_bootstrap=1000
+        )
+        
+        bootstrap_results[f"win_rate_{deck_size}"] = win_rate_ci
+        bootstrap_results[f"game_length_{deck_size}"] = length_ci
+        
+        print(f"    {deck_size} cards - Win rate CI: ({win_rate_ci[0]:.4f}, {win_rate_ci[1]:.4f})")
+        print(f"    {deck_size} cards - Length CI: ({length_ci[0]:.2f}, {length_ci[1]:.2f})")
+    
+    # Phase 5: Generate comprehensive report
+    print(f"\nPhase 5: Generating statistical report...")
+    
+    statistical_report = statistical_analyzer.generate_statistical_report(
+        hypothesis_tests, power_analyses, bootstrap_results
+    )
+    
+    # Compile all results
+    comprehensive_results = {
+        'monte_carlo_results': mc_results,
+        'hypothesis_tests': hypothesis_tests,
+        'power_analyses': power_analyses,
+        'bootstrap_results': bootstrap_results,
+        'statistical_report': statistical_report,
+        'metadata': {
+            'num_simulations': num_simulations,
+            'deck_sizes_analyzed': deck_sizes,
+            'significance_level': statistical_analyzer.alpha,
+            'variance_reduction_used': True,
+            'convergence_tracking': True
+        }
+    }
+    
+    # Save comprehensive results
+    if save_results and data_manager:
+        data_manager.save_analysis_result(
+            game_name="War",
+            deck_size=0,  # Use 0 to indicate comprehensive analysis
+            analysis_type="comprehensive_statistical_analysis",
+            data=comprehensive_results
+        )
+        
+        # Save report as text file
+        report_path = Path("data/reports/statistical_analysis_report.md")
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(report_path, 'w') as f:
+            f.write(statistical_report)
+        print(f"    Statistical report saved to: {report_path}")
+    
+    # Summary of key findings
+    print(f"\n" + "=" * 60)
+    print("STATISTICAL ANALYSIS SUMMARY")
+    print("=" * 60)
+    
+    # Check for 48-card optimality evidence
+    if 48 in mc_results:
+        win_rate_48 = mc_results[48]['win_rate_p1']
+        deviation_48 = abs(win_rate_48 - 0.5)
+        
+        deviations = {}
+        for deck_size, results in mc_results.items():
+            deviations[deck_size] = abs(results['win_rate_p1'] - 0.5)
+        
+        optimal_deck = min(deviations, key=deviations.get)
+        
+        print(f"Win Rate Balance Analysis:")
+        for deck_size, deviation in deviations.items():
+            marker = "★" if deck_size == optimal_deck else " "
+            print(f"  {marker} {deck_size} cards: {deviation:.6f} deviation from 50/50")
+        
+        print(f"\nOptimal deck for balance: {optimal_deck} cards")
+        
+        if optimal_deck == 48:
+            print("✓ 48-card deck shows best balance (supports hypothesis)")
+        else:
+            print("✗ 48-card deck does not show optimal balance")
+    
+    # Statistical significance summary
+    if hypothesis_tests:
+        significant_count = sum(1 for test in hypothesis_tests.values() if test.p_value < 0.05)
+        print(f"\nHypothesis Testing Summary:")
+        print(f"  Total tests: {len(hypothesis_tests)}")
+        print(f"  Significant results: {significant_count}")
+        print(f"  Multiple comparison correction: Bonferroni")
+        
+        if significant_count > 0:
+            print("  ✓ Found statistically significant differences")
+        else:
+            print("  ✗ No significant differences found after correction")
+    
+    return comprehensive_results
 
 
 def run_periodicity_analysis(deck_sizes: List[int] = [44, 48, 52]) -> Dict[str, Any]:
@@ -347,7 +566,7 @@ def main():
         '--analyses',
         nargs='+',
         default=['all'],
-        choices=['positions', 'monte_carlo', 'periodicity', 'temperature', 'all'],
+        choices=['positions', 'monte_carlo', 'periodicity', 'temperature', 'statistical', 'all'],
         help='Types of analyses to run'
     )
 
@@ -455,6 +674,14 @@ def main():
         all_results['temperature'] = run_temperature_evolution(
             deck_sizes=args.deck_sizes,
             samples_per_deck=50
+        )
+    
+    if 'all' in args.analyses or 'statistical' in args.analyses:
+        print("\nRunning comprehensive statistical analysis...")
+        all_results['statistical_analysis'] = run_statistical_analysis(
+            deck_sizes=args.deck_sizes,
+            num_simulations=args.simulations,
+            save_results=not args.no_save
         )
     
     # Generate report if requested
